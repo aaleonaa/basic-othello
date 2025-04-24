@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>オセロ</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      background-color: #f0f0f0;
+    }
+    #board {
+      display: grid;
+      grid-template-columns: repeat(8, 40px);
+      grid-template-rows: repeat(8, 40px);
+      margin: 20px auto;
+      gap: 2px;
+      width: fit-content;
+    }
+    .cell {
+      width: 40px;
+      height: 40px;
+      background-color: #2e8b57;
+      border-radius: 4px;
+      position: relative;
+      cursor: pointer;
+    }
+    .cell.black::before,
+    .cell.white::before {
+      content: '';
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      position: absolute;
+      top: 5px;
+      left: 5px;
+    }
+    .cell.black::before {
+      background-color: black;
+    }
+    .cell.white::before {
+      background-color: white;
+    }
+    #controls {
+      margin-top: 20px;
+    }
+    .valid::after {
+      content: '●';
+      font-size: 20px;
+      color: gold;
+      display: block;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>オセロ</h1>
+  <div id="turn-indicator">現在のターン: 黒</div>
+  <div id="board"></div>
+  <div id="controls">
+    <button id="undo-button">Undo</button>
+    <button id="reset-button">リセット</button>
+    <button id="highlight-toggle">補助ON</button>
+    <div id="score">黒: 2 / 白: 2</div>
+  </div>
+  <script>
+    const boardSize = 8;
+    let board = [];
+    let currentPlayer = 'B'; // B = 黒, W = 白
+    let history = [];
+
+    const directions = [
+      [-1, 0], [1, 0], [0, -1], [0, 1],
+      [-1, -1], [-1, 1], [1, -1], [1, 1]
+    ];
+
+    let resetTimeout = null;
+    let resetReady = false;
+    let assistEnabled = true;
+
+    function initBoard() {
+      board = Array.from({ length: boardSize }, () =>
+        Array(boardSize).fill(null)
+      );
+      board[3][3] = 'W';
+      board[4][4] = 'W';
+      board[3][4] = 'B';
+      board[4][3] = 'B';
+      currentPlayer = 'B';
+      history = [];
+      saveHistory();
+    }
+
+    function saveHistory() {
+      history.push(JSON.parse(JSON.stringify(board)));
+    }
+
+    function undo() {
+      if (history.length > 1) {
+        history.pop();
+        board = JSON.parse(JSON.stringify(history[history.length - 1]));
+        currentPlayer = currentPlayer === 'B' ? 'W' : 'B';
+        render();
+      }
+    }
+
+    function isValidMove(row, col, player) {
+      if (board[row][col] !== null) return false;
+      for (const [dr, dc] of directions) {
+        let r = row + dr, c = col + dc;
+        let hasOpponentBetween = false;
+        while (
+          r >= 0 && r < boardSize &&
+          c >= 0 && c < boardSize &&
+          board[r][c] !== null
+        ) {
+          if (board[r][c] === player) {
+            if (hasOpponentBetween) return true;
+            else break;
+          } else {
+            hasOpponentBetween = true;
+          }
+          r += dr;
+          c += dc;
+        }
+      }
+      return false;
+    }
+
+    function getValidMoves(player) {
+      const moves = [];
+      for (let r = 0; r < boardSize; r++) {
+        for (let c = 0; c < boardSize; c++) {
+          if (isValidMove(r, c, player)) {
+            moves.push([r, c]);
+          }
+        }
+      }
+      return moves;
+    }
+
+    function applyMove(row, col, player) {
+      board[row][col] = player;
+      for (const [dr, dc] of directions) {
+        let r = row + dr, c = col + dc;
+        const toFlip = [];
+        while (
+          r >= 0 && r < boardSize &&
+          c >= 0 && c < boardSize &&
+          board[r][c] !== null
+        ) {
+          if (board[r][c] === player) {
+            for (const [fr, fc] of toFlip) {
+              board[fr][fc] = player;
+            }
+            break;
+          } else {
+            toFlip.push([r, c]);
+          }
+          r += dr;
+          c += dc;
+        }
+      }
+    }
+
+    function render() {
+      const boardDiv = document.getElementById('board');
+      boardDiv.innerHTML = '';
+
+      const validMoves = getValidMoves(currentPlayer);
+
+      for (let row = 0; row < boardSize; row++) {
+        for (let col = 0; col < boardSize; col++) {
+          const cell = document.createElement('div');
+          cell.classList.add('cell');
+          if (board[row][col] === 'B') cell.classList.add('black');
+          if (board[row][col] === 'W') cell.classList.add('white');
+
+          if (
+            board[row][col] === null &&
+            assistEnabled &&
+            validMoves.some(([r, c]) => r === row && c === col)
+          ) {
+            cell.classList.add('valid');
+          }
+
+          cell.addEventListener('click', () => {
+            if (isValidMove(row, col, currentPlayer)) {
+              applyMove(row, col, currentPlayer);
+              currentPlayer = currentPlayer === 'B' ? 'W' : 'B';
+              saveHistory();
+              checkPass();
+              render();
+              checkGameEnd();
+            }
+          });
+
+          boardDiv.appendChild(cell);
+        }
+      }
+
+      document.getElementById('turn-indicator').textContent =
+        `現在のターン: ${currentPlayer === 'B' ? '黒' : '白'}`;
+      updateScore();
+    }
+
+    function updateScore() {
+      let black = 0, white = 0;
+      for (let row of board) {
+        for (let cell of row) {
+          if (cell === 'B') black++;
+          if (cell === 'W') white++;
+        }
+      }
+      document.getElementById('score').textContent = `黒: ${black} / 白: ${white}`;
+    }
+
+    function checkPass() {
+      const currentMoves = getValidMoves(currentPlayer);
+      if (currentMoves.length === 0) {
+        alert(`${currentPlayer === 'B' ? '黒' : '白'}は置けないのでパスされました。`);
+        currentPlayer = currentPlayer === 'B' ? 'W' : 'B';
+      }
+    }
+
+    function checkGameEnd() {
+      const hasValidMove = ['B', 'W'].some(player => {
+        return getValidMoves(player).length > 0;
+      });
+
+      if (!hasValidMove) {
+        alert('ゲーム終了！');
+      }
+    }
+
+    document.getElementById('undo-button').addEventListener('click', undo);
+
+    document.getElementById('reset-button').addEventListener('click', () => {
+      const btn = document.getElementById('reset-button');
+      if (resetReady) {
+        initBoard();
+        render();
+        btn.textContent = 'リセット';
+        resetReady = false;
+        clearTimeout(resetTimeout);
+      } else {
+        btn.textContent = 'もう一度押してリセット（2秒以内）';
+        resetReady = true;
+        resetTimeout = setTimeout(() => {
+          btn.textContent = 'リセット';
+          resetReady = false;
+        }, 2000);
+      }
+    });
+
+    document.getElementById('highlight-toggle').addEventListener('click', () => {
+      assistEnabled = !assistEnabled;
+      const btn = document.getElementById('highlight-toggle');
+      btn.textContent = assistEnabled ? '補助ON' : '補助OFF';
+      render();
+    });
+
+    initBoard();
+    render();
+  </script>
+</body>
+</html>
